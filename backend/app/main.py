@@ -5,6 +5,7 @@ from pydantic import BaseModel
 from app import seed
 from app.db import connect
 from app.engines.rota import build_week_slots, swap_legal, apply_swap
+from app.modules import regen_guard, regen_history, swap_void
 
 app = FastAPI(title="Chorerota", version="0.1.0")
 app.add_middleware(CORSMiddleware, allow_origins=["*"], allow_methods=["*"], allow_headers=["*"])
@@ -49,30 +50,60 @@ def week_board(week_id: int):
     assigns = [dict(r) for r in c.execute("SELECT * FROM assignments WHERE week_id=?", (week_id,))]
     members = {r["id"]: r["name"] for r in c.execute("SELECT id,name FROM members")}
     tasks = {r["id"]: r["title"] for r in c.execute("SELECT id,title FROM tasks")}
+    latest_regen = regen_history.latest_for_week(c, week_id)
     c.close()
     for a in assigns:
         a["member_name"] = members.get(a["member_id"], "?")
         a["task_title"] = tasks.get(a["task_id"], "?")
-    return {"week": dict(week), "assignments": assigns}
+    return {
+        "week": dict(week),
+        "assignments": assigns,
+        "latest_regen": latest_regen,
+    }
 
 class GenBody(BaseModel):
     days: int = 7
+    force: bool = False
+    reason: str = ""
 
 @app.post("/api/weeks/{week_id}/generate")
 def generate(week_id: int, body: GenBody = GenBody()):
     c = connect()
     week = c.execute("SELECT * FROM weeks WHERE id=?", (week_id,)).fetchone()
     if not week: c.close(); raise HTTPException(404, "week not found")
+    grid_count = c.execute(
+        "SELECT COUNT(*) n FROM assignments WHERE week_id=?", (week_id,)
+    ).fetchone()["n"]
+    gate = regen_guard.evaluate(week["status"], grid_count, body.force, body.reason)
+    if not gate["ok"]:
+        # 拒绝重生成时格表内容必须保持不变：不写任何数据
+        c.close()
+        raise HTTPException(409, gate["error"])
     mids = [r["id"] for r in c.execute("SELECT id FROM members WHERE active=1 AND data_quality='clean' ORDER BY id")]
     tids = [r["id"] for r in c.execute("SELECT id FROM tasks WHERE data_quality='clean' AND weight>0 ORDER BY id")]
     slots = build_week_slots(mids, tids, days=body.days)
+    regen_id = None
+    voided = 0
+    if week["status"] == "ready" and grid_count > 0:
+        # 门禁放行的强制重生成：先写履历，再覆写格位，并作废该周 pending 对调
+        regen_id = regen_history.add(c, week_id, gate["reason"])
+        voided = swap_void.void_pending(c, week_id, regen_id)
     c.execute("DELETE FROM assignments WHERE week_id=?", (week_id,))
     for s in slots:
         c.execute("INSERT INTO assignments(week_id,day,task_id,member_id) VALUES (?,?,?,?)",
                   (week_id, s["day"], s["task_id"], s["member_id"]))
     c.execute("UPDATE weeks SET status='ready' WHERE id=?", (week_id,))
     c.commit(); c.close()
-    return {"count": len(slots), "slots": slots}
+    return {"count": len(slots), "slots": slots, "regen_id": regen_id, "voided_swaps": voided}
+
+@app.get("/api/weeks/{week_id}/regenerations")
+def list_regenerations(week_id: int):
+    c = connect()
+    week = c.execute("SELECT id FROM weeks WHERE id=?", (week_id,)).fetchone()
+    if not week: c.close(); raise HTTPException(404, "week not found")
+    rows = regen_history.list_recent(c, week_id=week_id)
+    c.close()
+    return rows
 
 class SwapBody(BaseModel):
     a_day: int; a_task: int; b_day: int; b_task: int; note: str = ""
@@ -99,8 +130,9 @@ def confirm_swap(swap_id: int):
     c = connect()
     sw = c.execute("SELECT * FROM swap_requests WHERE id=?", (swap_id,)).fetchone()
     if not sw: c.close(); raise HTTPException(404, "swap not found")
-    if sw["status"] != "pending":
-        c.close(); raise HTTPException(400, "not_pending")
+    err = swap_void.confirm_error(sw["status"])
+    if err:
+        c.close(); raise HTTPException(400, err)
     assigns = [dict(r) for r in c.execute(
         "SELECT id,day,task_id,member_id FROM assignments WHERE week_id=?", (sw["week_id"],))]
     slots = [{"day": a["day"], "task_id": a["task_id"], "member_id": a["member_id"]} for a in assigns]

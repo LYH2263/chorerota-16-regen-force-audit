@@ -1,7 +1,7 @@
 <template>
   <div>
     <h1 class="brand">对调</h1>
-    <p class="muted">先生成周表，再填写两格对调（day + task_id）</p>
+    <p class="muted">先生成周表，再填写两格对调（day + task_id）。强制重生成会作废该周未确认对调。</p>
     <div class="week-card" style="margin-bottom:12px">
       <label>A day <input type="number" v-model.number="form.a_day" /></label>
       <label>A task_id <input type="number" v-model.number="form.a_task" /></label>
@@ -9,11 +9,12 @@
       <label>B task_id <input type="number" v-model.number="form.b_task" /></label>
       <button @click="request">申请对调</button>
     </div>
-    <p v-if="err" class="err">{{ err }}</p>
+    <p v-if="err" class="err">{{ friendly(err) }}</p>
     <ul class="list">
       <li v-for="s in rows" :key="s.id">
         #{{ s.id }} D{{ s.a_day }}/T{{ s.a_task }} ↔ D{{ s.b_day }}/T{{ s.b_task }}
-        <span class="chip" :class="{ coral: s.status==='pending' }">{{ s.status }}</span>
+        <span class="chip" :class="{ coral: s.status==='pending', void: s.status==='voided' }">{{ s.status }}</span>
+        <span v-if="s.status==='voided'" class="muted">已作废 · 重生成履历 #{{ s.voided_by_regen_id }}，不可确认</span>
         <button v-if="s.status==='pending'" style="margin-left:8px" @click="confirm(s.id)">确认改表</button>
       </li>
     </ul>
@@ -25,6 +26,9 @@ import { api } from '../api'
 const rows = ref([])
 const err = ref('')
 const form = ref({ a_day: 0, a_task: 1, b_day: 1, b_task: 1 })
+function friendly(m) {
+  return ({ swap_voided: '该对调已被强制重生成作废，不能确认。' })[m] || m
+}
 async function load() { rows.value = await api('/swaps') }
 async function request() {
   err.value = ''
@@ -40,3 +44,6 @@ async function confirm(id) {
 }
 onMounted(load)
 </script>
+<style scoped>
+.chip.void { background: #e6e8e6; color: #5a6b60; text-decoration: line-through; }
+</style>
