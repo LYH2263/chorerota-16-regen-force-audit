@@ -13,7 +13,8 @@
     <ul class="list">
       <li v-for="s in rows" :key="s.id">
         #{{ s.id }} D{{ s.a_day }}/T{{ s.a_task }} ↔ D{{ s.b_day }}/T{{ s.b_task }}
-        <span class="chip" :class="{ coral: s.status==='pending' }">{{ s.status }}</span>
+        <span class="chip" :class="{ coral: s.status==='pending', gray: s.status==='voided' }">{{ statusText(s.status) }}</span>
+        <span v-if="s.status==='voided'" class="muted">因 #{{ s.voided_by_regen_id }} 作废</span>
         <button v-if="s.status==='pending'" style="margin-left:8px" @click="confirm(s.id)">确认改表</button>
       </li>
     </ul>
@@ -22,10 +23,15 @@
 <script setup>
 import { ref, onMounted } from 'vue'
 import { api } from '../api'
+const STATUS_TEXT = { pending: '待确认', confirmed: '已确认', voided: '已作废' }
+function statusText(s) { return STATUS_TEXT[s] || s }
 const rows = ref([])
 const err = ref('')
 const form = ref({ a_day: 0, a_task: 1, b_day: 1, b_task: 1 })
-async function load() { rows.value = await api('/swaps') }
+async function load() {
+  try { rows.value = await api('/swaps') }
+  catch (e) { err.value = e.message }
+}
 async function request() {
   err.value = ''
   try {
@@ -36,7 +42,10 @@ async function request() {
 async function confirm(id) {
   err.value = ''
   try { await api('/swaps/' + id + '/confirm', { method: 'POST', body: '{}' }); await load() }
-  catch (e) { err.value = e.message }
+  catch (e) {
+    if (e.message === 'swap_voided') { err.value = '该对调已因重生成作废，无法确认'; await load() }
+    else { err.value = e.message }
+  }
 }
 onMounted(load)
 </script>

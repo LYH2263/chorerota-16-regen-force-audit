@@ -49,3 +49,16 @@ input, select, textarea {
 .list { padding: 0; margin: 0; }
 .muted { color: var(--muted); font-size: 13px; }
 .err { color: #b33a2c; }
+.chip.gray { background: #e6e9e5; color: #5a6b60; }
+button.force-btn { background: #fff; color: #b33a2c; border: 1px solid var(--coral); }
+.topbar { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; margin: 8px 0; }
+.regen-pin {
+  border: 1px solid var(--coral); background: #fff4f2; color: #7a2e23;
+  border-radius: 12px; padding: 8px 12px; font-size: 13px; flex: 1; min-width: 220px;
+}
+.regen-pin-head { font-weight: 600; margin-bottom: 2px; }
+.regen-section { margin: 4px 0 16px; }
+.regen-title { font-size: 15px; margin: 0 0 6px; }
+.regen-list li.pinned { background: #fff4f2; border-radius: 10px; padding: 10px; border-bottom: 0; }
+.pin-mark { color: #b33a2c; font-weight: 600; font-size: 13px; margin-right: 8px; }
+.regen-reason { margin-top: 4px; font-size: 14px; }
